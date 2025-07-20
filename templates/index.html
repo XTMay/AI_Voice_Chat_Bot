@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI语音聊天机器人</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 600px;
+            width: 90%;
+        }
+        
+        .title {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background-color: #f8f9ff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background-color: #f0f2ff;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .upload-text {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .result-area {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 15px;
+            display: none;
+        }
+        
+        .result-item {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .result-label {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .result-content {
+            color: #666;
+            line-height: 1.5;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            color: #e74c3c;
+            background-color: #fdf2f2;
+            border: 1px solid #f5c6cb;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+        }
+        
+        .file-info {
+            background-color: #e8f5e8;
+            border: 1px solid #c3e6c3;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 14px;
+            color: #2d5a2d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">🤖 AI语音聊天机器人</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">🎤</div>
+            <div class="upload-text">点击或拖拽上传语音文件</div>
+            <div style="font-size: 14px; color: #999;">支持 .wav, .mp3, .flac, .m4a 格式</div>
+            <input type="file" id="audioFile" class="file-input" accept=".wav,.mp3,.flac,.m4a">
+        </div>
+        
+        <div class="file-info" id="fileInfo" style="display: none;"></div>
+        
+        <div style="text-align: center;">
+            <button class="btn" id="uploadBtn" disabled>🚀 转文字 + 获取回答</button>
+            <button class="btn" id="clearBtn" style="background: #6c757d;">🗑️ 清除</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>正在处理语音，请稍候...</div>
+        </div>
+        
+        <div class="result-area" id="resultArea">
+            <div class="result-item">
+                <div class="result-label">📝 识别文字：</div>
+                <div class="result-content" id="recognizedText"></div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">🎯 识别意图：</div>
+                <div class="result-content" id="detectedIntent"></div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">💬 智能回答：</div>
+                <div class="result-content" id="aiAnswer"></div>
+            </div>
+        </div>
+        
+        <div id="errorMessage"></div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+        
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('audioFile');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const loading = document.getElementById('loading');
+        const resultArea = document.getElementById('resultArea');
+        const fileInfo = document.getElementById('fileInfo');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        // 点击上传区域
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // 文件选择
+        fileInput.addEventListener('change', handleFileSelect);
+        
+        // 拖拽功能
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+        
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        }
+        
+        function handleFile(file) {
+            const allowedTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/flac', 'audio/m4a'];
+            const allowedExtensions = ['.wav', '.mp3', '.flac', '.m4a'];
+            
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            
+            if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+                showError('请选择支持的音频格式文件 (.wav, .mp3, .flac, .m4a)');
+                return;
+            }
+            
+            if (file.size > 16 * 1024 * 1024) {
+                showError('文件大小不能超过 16MB');
+                return;
+            }
+            
+            selectedFile = file;
+            uploadBtn.disabled = false;
+            
+            fileInfo.innerHTML = `
+                <strong>已选择文件：</strong> ${file.name}<br>
+                <strong>文件大小：</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB
+            `;
+            fileInfo.style.display = 'block';
+            
+            clearError();
+        }
+        
+        // 上传并处理
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) {
+                showError('请先选择音频文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('audio', selectedFile);
+            
+            loading.style.display = 'block';
+            uploadBtn.disabled = true;
+            resultArea.style.display = 'none';
+            clearError();
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('recognizedText').textContent = data.recognized_text;
+                    document.getElementById('detectedIntent').textContent = getIntentDisplay(data.intent);
+                    document.getElementById('aiAnswer').textContent = data.answer;
+                    resultArea.style.display = 'block';
+                } else {
+                    showError(data.error || '处理失败');
+                }
+            } catch (error) {
+                showError('网络错误，请检查服务器连接');
+                console.error('Error:', error);
+            } finally {
+                loading.style.display = 'none';
+                uploadBtn.disabled = false;
+            }
+        });
+        
+        // 清除
+        clearBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            uploadBtn.disabled = true;
+            resultArea.style.display = 'none';
+            fileInfo.style.display = 'none';
+            clearError();
+        });
+        
+        function getIntentDisplay(intent) {
+            const intentMap = {
+                'weather': '天气查询',
+                'time': '时间查询',
+                'greeting': '问候',
+                'music': '音乐相关',
+                'news': '新闻资讯',
+                'food': '美食推荐',
+                'travel': '旅游咨询',
+                'unknown': '未知意图'
+            };
+            return intentMap[intent] || intent;
+        }
+        
+        function showError(message) {
+            errorMessage.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        function clearError() {
+            errorMessage.innerHTML = '';
+        }
+    </script>
+</body>
+</html>
