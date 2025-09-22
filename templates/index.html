@@ -25,8 +25,8 @@
             border-radius: 20px;
             padding: 40px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            max-width: 600px;
-            width: 90%;
+            max-width: 700px;
+            width: 95%;
         }
         
         .title {
@@ -162,23 +162,82 @@
             font-size: 14px;
             color: #2d5a2d;
         }
+
+        .voice-control-area {
+            margin: 20px 0;
+            padding: 25px;
+            border: 2px dashed #17a2b8;
+            border-radius: 15px;
+            text-align: center;
+            background: linear-gradient(135deg, #e8f6f8 0%, #f0f9fa 100%);
+        }
+
+        .voice-btn {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+        }
+
+        .recording-status {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border: 1px solid #ffcccc;
+            border-radius: 8px;
+        }
+
+        .recording-indicator {
+            color: #dc3545;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .recording-time {
+            color: #666;
+            font-size: 14px;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1 class="title">🤖 AI语音聊天机器人</h1>
         
+        <!-- 语音录制区域 -->
+        <div class="voice-control-area">
+            <h3 style="color: #17a2b8; margin-bottom: 15px; font-size: 18px;">🎤 语音对话</h3>
+            <div style="text-align: center; margin-bottom: 15px;">
+                <button class="btn voice-btn" id="recordBtn">🎤 开始录音</button>
+                <button class="btn" id="stopBtn" style="background: #dc3545; display: none;">⏹️ 停止录音</button>
+                <button class="btn" id="playBtn" style="background: #28a745; display: none;">▶️ 播放录音</button>
+            </div>
+
+            <div class="recording-status" id="recordingStatus" style="display: none;">
+                <div class="recording-indicator">🔴 录音中...</div>
+                <div class="recording-time" id="recordingTime">00:00</div>
+            </div>
+            <div style="font-size: 14px; color: #666; margin-top: 10px;">
+                点击录音按钮开始语音对话，支持实时语音识别
+            </div>
+        </div>
+
+        <!-- 文字输入区域 -->
+        <div class="text-input-area" style="margin: 20px 0;">
+            <textarea id="textInput" placeholder="或者直接输入文字..." style="width: 100%; height: 80px; padding: 15px; border: 2px solid #ddd; border-radius: 10px; font-size: 16px; resize: vertical;"></textarea>
+            <div style="text-align: center; margin-top: 10px;">
+                <button class="btn" id="textSubmitBtn">💬 发送文字消息</button>
+            </div>
+        </div>
+
         <div class="upload-area" id="uploadArea">
-            <div class="upload-icon">🎤</div>
-            <div class="upload-text">点击或拖拽上传语音文件</div>
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">或点击上传语音文件</div>
             <div style="font-size: 14px; color: #999;">支持 .wav, .mp3, .flac, .m4a 格式</div>
             <input type="file" id="audioFile" class="file-input" accept=".wav,.mp3,.flac,.m4a">
         </div>
-        
+
         <div class="file-info" id="fileInfo" style="display: none;"></div>
-        
+
         <div style="text-align: center;">
-            <button class="btn" id="uploadBtn" disabled>🚀 转文字 + 获取回答</button>
+            <button class="btn" id="uploadBtn" disabled>🚀 处理文件</button>
             <button class="btn" id="clearBtn" style="background: #6c757d;">🗑️ 清除</button>
         </div>
         
@@ -199,6 +258,10 @@
             <div class="result-item">
                 <div class="result-label">💬 智能回答：</div>
                 <div class="result-content" id="aiAnswer"></div>
+                <div style="margin-top: 10px; text-align: center;">
+                    <button class="btn" id="speakBtn" style="background: #17a2b8; display: none;">🔊 播放语音回答</button>
+                    <button class="btn" id="stopSpeakBtn" style="background: #6c757d; display: none;">⏹️ 停止播放</button>
+                </div>
             </div>
         </div>
         
@@ -207,7 +270,16 @@
 
     <script>
         let selectedFile = null;
-        
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let recordedBlob = null;
+        let speechRecognition = null;
+        let speechSynthesis = window.speechSynthesis;
+        let currentUtterance = null;
+        let recordingStartTime = null;
+        let recordingTimer = null;
+
+        // DOM elements
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('audioFile');
         const uploadBtn = document.getElementById('uploadBtn');
@@ -216,7 +288,276 @@
         const resultArea = document.getElementById('resultArea');
         const fileInfo = document.getElementById('fileInfo');
         const errorMessage = document.getElementById('errorMessage');
-        
+
+        // Voice control elements
+        const recordBtn = document.getElementById('recordBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const playBtn = document.getElementById('playBtn');
+        const recordingStatus = document.getElementById('recordingStatus');
+        const recordingTime = document.getElementById('recordingTime');
+
+        // Text input elements
+        const textInput = document.getElementById('textInput');
+        const textSubmitBtn = document.getElementById('textSubmitBtn');
+
+        // Speech output elements
+        const speakBtn = document.getElementById('speakBtn');
+        const stopSpeakBtn = document.getElementById('stopSpeakBtn');
+
+        // 初始化 Web Speech API
+        function initSpeechRecognition() {
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                speechRecognition = new SpeechRecognition();
+                speechRecognition.continuous = false;
+                speechRecognition.interimResults = false;
+                speechRecognition.lang = 'zh-CN';
+
+                speechRecognition.onresult = function(event) {
+                    const text = event.results[0][0].transcript;
+                    console.log('语音识别结果:', text);
+                    // 直接处理识别到的文字
+                    processText(text);
+                };
+
+                speechRecognition.onerror = function(event) {
+                    console.error('Speech recognition error:', event.error);
+                    console.log('回退到录音文件处理');
+                    // 如果Web Speech API失败，使用录音文件
+                    uploadRecordedAudio();
+                };
+
+                speechRecognition.onend = function() {
+                    console.log('语音识别结束');
+                };
+
+                return true;
+            }
+            return false;
+        }
+
+        // 语音录制功能
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = function(event) {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = function() {
+                    recordedBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    selectedFile = new File([recordedBlob], 'recording.webm', { type: 'audio/webm' });
+
+                    playBtn.style.display = 'inline-block';
+                    uploadBtn.disabled = false;
+
+                    fileInfo.innerHTML = `
+                        <strong>录音完成：</strong> recording.webm<br>
+                        <strong>文件大小：</strong> ${(recordedBlob.size / 1024 / 1024).toFixed(2)} MB<br>
+                        <button class="btn" onclick="uploadRecordedAudio()" style="margin-top: 10px; background: #17a2b8;">🚀 发送录音</button>
+                    `;
+                    fileInfo.style.display = 'block';
+
+                    // 停止录音计时器
+                    clearInterval(recordingTimer);
+
+                    // 首先尝试使用 Web Speech API 直接识别
+                    if (speechRecognition) {
+                        speechRecognition.start();
+                    } else {
+                        // 如果Web Speech API不可用，自动上传录音文件到后端处理
+                        uploadRecordedAudio();
+                    }
+                };
+
+                mediaRecorder.start();
+                recordingStartTime = Date.now();
+                startRecordingTimer();
+
+                recordBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                recordingStatus.style.display = 'block';
+
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                showError('无法访问麦克风，请检查权限设置');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            }
+
+            recordBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            recordingStatus.style.display = 'none';
+        }
+
+        function startRecordingTimer() {
+            recordingTimer = setInterval(() => {
+                const elapsed = Date.now() - recordingStartTime;
+                const minutes = Math.floor(elapsed / 60000);
+                const seconds = Math.floor((elapsed % 60000) / 1000);
+                recordingTime.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }, 1000);
+        }
+
+        function playRecording() {
+            if (recordedBlob) {
+                const audio = new Audio(URL.createObjectURL(recordedBlob));
+                audio.play();
+            }
+        }
+
+        // 文字转语音功能
+        function speakText(text) {
+            if (speechSynthesis) {
+                // 停止当前播放
+                speechSynthesis.cancel();
+
+                currentUtterance = new SpeechSynthesisUtterance(text);
+                currentUtterance.lang = 'zh-CN';
+                currentUtterance.rate = 0.9;
+                currentUtterance.pitch = 1;
+
+                currentUtterance.onstart = function() {
+                    speakBtn.style.display = 'none';
+                    stopSpeakBtn.style.display = 'inline-block';
+                };
+
+                currentUtterance.onend = function() {
+                    speakBtn.style.display = 'inline-block';
+                    stopSpeakBtn.style.display = 'none';
+                };
+
+                speechSynthesis.speak(currentUtterance);
+            } else {
+                showError('浏览器不支持语音合成');
+            }
+        }
+
+        function stopSpeaking() {
+            if (speechSynthesis) {
+                speechSynthesis.cancel();
+                speakBtn.style.display = 'inline-block';
+                stopSpeakBtn.style.display = 'none';
+            }
+        }
+
+        // 自动上传录音文件到后端处理
+        async function uploadRecordedAudio() {
+            if (!selectedFile) {
+                showError('录音文件不存在');
+                return;
+            }
+
+            console.log('准备上传文件:', selectedFile.name, '大小:', selectedFile.size, '类型:', selectedFile.type);
+
+            const formData = new FormData();
+            formData.append('audio', selectedFile);
+
+            loading.style.display = 'block';
+            clearError();
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('recognizedText').textContent = data.recognized_text;
+                    document.getElementById('detectedIntent').textContent = getIntentDisplay(data.intent);
+                    document.getElementById('aiAnswer').textContent = data.answer;
+                    resultArea.style.display = 'block';
+                    speakBtn.style.display = 'inline-block';
+                } else {
+                    showError(data.error || '处理失败');
+                }
+            } catch (error) {
+                showError('网络错误，请检查服务器连接');
+                console.error('Error:', error);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 处理文字（发送到后端）
+        async function processText(text) {
+            loading.style.display = 'block';
+            clearError();
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('recognizedText').textContent = data.recognized_text || text;
+                    document.getElementById('detectedIntent').textContent = getIntentDisplay(data.intent);
+                    document.getElementById('aiAnswer').textContent = data.answer;
+                    resultArea.style.display = 'block';
+                    speakBtn.style.display = 'inline-block';
+                } else {
+                    showError(data.error || '处理失败');
+                }
+            } catch (error) {
+                showError('网络错误，请检查服务器连接');
+                console.error('Error:', error);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 事件监听器
+        recordBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        playBtn.addEventListener('click', playRecording);
+
+        textSubmitBtn.addEventListener('click', () => {
+            const text = textInput.value.trim();
+            if (text) {
+                processText(text);
+            } else {
+                showError('请输入文字');
+            }
+        });
+
+        textInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                textSubmitBtn.click();
+            }
+        });
+
+        speakBtn.addEventListener('click', () => {
+            const aiAnswer = document.getElementById('aiAnswer').textContent;
+            if (aiAnswer) {
+                speakText(aiAnswer);
+            }
+        });
+
+        stopSpeakBtn.addEventListener('click', stopSpeaking);
+
+        // 初始化
+        window.addEventListener('load', () => {
+            initSpeechRecognition();
+        });
+
         // 点击上传区域
         uploadArea.addEventListener('click', () => {
             fileInput.click();
@@ -252,8 +593,8 @@
         }
         
         function handleFile(file) {
-            const allowedTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/flac', 'audio/m4a'];
-            const allowedExtensions = ['.wav', '.mp3', '.flac', '.m4a'];
+            const allowedTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/flac', 'audio/m4a', 'audio/webm'];
+            const allowedExtensions = ['.wav', '.mp3', '.flac', '.m4a', '.webm'];
             
             const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
             
@@ -322,10 +663,26 @@
         // 清除
         clearBtn.addEventListener('click', () => {
             selectedFile = null;
+            recordedBlob = null;
             fileInput.value = '';
+            textInput.value = '';
             uploadBtn.disabled = true;
             resultArea.style.display = 'none';
             fileInfo.style.display = 'none';
+            playBtn.style.display = 'none';
+            speakBtn.style.display = 'none';
+            stopSpeakBtn.style.display = 'none';
+
+            // 停止语音合成
+            if (speechSynthesis) {
+                speechSynthesis.cancel();
+            }
+
+            // 停止录音（如果正在录音）
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                stopRecording();
+            }
+
             clearError();
         });
         

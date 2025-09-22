@@ -10,6 +10,7 @@ import socket
 from dotenv import load_dotenv
 import opencc
 import openai
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -19,7 +20,7 @@ CORS(app)
 
 # 配置上传文件
 UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'wav', 'mp3', 'flac', 'm4a'}
+ALLOWED_EXTENSIONS = {'wav', 'mp3', 'flac', 'm4a', 'webm'}
 # Configure OpenAI API key
 openai.api_key = os.environ.get('OPENAI_API_KEY')
 
@@ -31,6 +32,10 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # 全局Whisper模型
 whisper_model = None
+
+# Ollama配置
+OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2')
 
 
 
@@ -102,80 +107,75 @@ def speech_to_text(audio_file_path):
         except Exception as e:
             return f"处理音频文件时出错: {e}"
 
-# LLM-based intent detection using OpenAI GPT-4o mini
+# LLM-based intent detection using Ollama
 def detect_intent_LLM(text):
     try:
         # Define the available intent categories
         intent_categories = [
             'weather', 'time', 'greeting', 'music', 'news', 'food', 'travel', 'unknown'
         ]
-        
-        # Create the prompt for GPT-4o mini
-#         prompt = f"""
-# 你是一个意图识别专家。请分析用户的输入文本，并从以下类别中选择最合适的意图：
 
-# 意图类别：
-# - weather: 天气相关询问（天气、温度、下雨、晴天等）
-# - time: 时间相关询问（几点、现在时间等）
-# - greeting: 问候语（你好、早上好等）
-# - music: 音乐相关（播放音乐、歌曲等）
-# - news: 新闻资讯相关
-# - food: 美食、餐厅、吃饭相关
-# - travel: 旅游、景点相关
-# - unknown: 以上都不匹配
+        # Create the prompt for Ollama
+        prompt = f"""你是一个意图识别专家。请分析用户的输入文本，并从以下类别中选择最符合用户当前主要目的的一个意图类别：
 
-# 用户输入：\"{text}\"
+意图类别：
+- weather: 天气相关询问（天气、温度、下雨、晴天等）
+- time: 时间相关询问（几点、现在时间等）
+- greeting: 问候语（你好、早上好等）
+- music: 音乐相关（播放音乐、歌曲等）
+- news: 新闻资讯相关
+- food: 美食、餐厅、吃饭相关
+- travel: 旅游、景点相关
+- unknown: 以上都不匹配或意图不明确
 
-# 请只返回一个意图类别名称，不要包含其他解释。
-# """
+注意：
+- 如果句子包含多个主题，请判断用户最有可能希望得到回答的部分。
+- 忽略天气/音乐等背景叙述，专注于可能触发动作的问题（例如「不知道吃什么」→ food）。
 
-        # Create the prompt for GPT-4o mini
-        prompt = f"""
-        你是一个意图识别专家。请分析用户的输入文本，并从以下类别中选择**最符合用户当前主要目的**的一个意图类别：
+请只返回最相关的一个意图类别名称，例如："food"
 
-        意图类别：
-        - weather: 天气相关询问（天气、温度、下雨、晴天等）
-        - time: 时间相关询问（几点、现在时间等）
-        - greeting: 问候语（你好、早上好等）
-        - music: 音乐相关（播放音乐、歌曲等）
-        - news: 新闻资讯相关
-        - food: 美食、餐厅、吃饭相关
-        - travel: 旅游、景点相关
-        - unknown: 以上都不匹配或意图不明确
+用户输入："{text}"
 
-        注意：
-        - 如果句子包含多个主题，请判断用户**最有可能希望得到回答的部分**。
-        - 忽略天气/音乐等背景叙述，专注于可能触发动作的问题（例如「不知道吃什么」→ food）。
+回答："""
 
-        请只返回最相关的一个意图类别名称，例如："food"
-        
-        用户输入：\"{text}\"
-        """
+        # Call Ollama API
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "max_tokens": 10
+            }
+        }
 
-        # Call OpenAI API Local LLM
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "你是一个专业的意图识别助手，只返回意图类别名称。"},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=50,
-            temperature=0.1
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+            timeout=15
         )
-        
-        # Extract the intent from response
-        predicted_intent = response.choices[0].message.content.strip().lower()
-        
-        # Validate the predicted intent
-        if predicted_intent in intent_categories:
-            return predicted_intent
-        else:
-            # Fallback to keyword-based detection if LLM returns invalid intent
-            print(f"LLM返回了无效意图: {predicted_intent}，回退到关键词匹配")
+
+        if response.status_code == 200:
+            result = response.json()
+            predicted_intent = result.get('response', '').strip().lower()
+
+            # Clean up the response - sometimes Ollama returns extra text
+            for category in intent_categories:
+                if category in predicted_intent:
+                    return category
+
+            # If no direct match, fallback to keyword-based detection
+            print(f"Ollama返回了无效意图: {predicted_intent}，回退到关键词匹配")
             return detect_intent(text)
-            
+        else:
+            print(f"Ollama API错误: {response.status_code}")
+            return detect_intent(text)
+
+    except requests.exceptions.ConnectionError:
+        print("无法连接到Ollama服务，使用关键词匹配")
+        return detect_intent(text)
     except Exception as e:
-        print(f"LLM意图识别失败: {e}")
+        print(f"Ollama意图识别失败: {e}")
         # Fallback to the original keyword-based method
         return detect_intent(text)
 
@@ -202,9 +202,74 @@ def detect_intent(text):
     
     return 'unknown'
 
-# 获取回答
-def get_answer(intent, qa_data):
-    return qa_data.get(intent, qa_data.get('unknown', '抱歉，我无法回答这个问题。'))
+# 使用Ollama生成智能回答
+def generate_ollama_response(text, intent):
+    try:
+        # 根据意图构建提示词
+        if intent == 'weather':
+            prompt = f"请用中文回答。用户询问天气相关问题：{text}。请提供一个友好、有帮助的回答。"
+        elif intent == 'time':
+            prompt = f"请用中文回答。用户询问时间相关问题：{text}。请提供当前时间信息或相关帮助。"
+        elif intent == 'greeting':
+            prompt = f"请用中文回答。用户打招呼：{text}。请给出一个友好的回应。"
+        elif intent == 'food':
+            prompt = f"请用中文回答。用户询问美食相关问题：{text}。请提供有用的美食建议或推荐。"
+        elif intent == 'travel':
+            prompt = f"请用中文回答。用户询问旅游相关问题：{text}。请提供旅游建议或信息。"
+        elif intent == 'music':
+            prompt = f"请用中文回答。用户询问音乐相关问题：{text}。请提供音乐相关的回答。"
+        elif intent == 'news':
+            prompt = f"请用中文回答。用户询问新闻相关问题：{text}。请提供新闻或资讯相关的回答。"
+        else:
+            prompt = f"请用中文回答。用户说：{text}。请提供一个有帮助、友好的回答。"
+
+        # 调用Ollama API
+        system_prompt = "你是一个中文助手，必须用中文回答用户的问题。"
+        full_prompt = f"{system_prompt}\n\n{prompt}\n\n请用中文回答："
+
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 100
+            }
+        }
+
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            json=payload,
+            timeout=60
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('response', '抱歉，我无法生成回答。').strip()
+        else:
+            print(f"Ollama API错误: {response.status_code}")
+            return get_fallback_answer(intent)
+
+    except requests.exceptions.ConnectionError:
+        print("无法连接到Ollama服务，请确保Ollama正在运行")
+        return get_fallback_answer(intent)
+    except Exception as e:
+        print(f"Ollama调用失败: {e}")
+        return get_fallback_answer(intent)
+
+# 获取回答（保留原有逻辑作为后备）
+def get_fallback_answer(intent):
+    fallback_answers = {
+        'weather': '今天天气不错！不过我无法获取实时天气信息，建议你查看天气应用。',
+        'time': '我无法获取当前时间，请查看你的设备时间。',
+        'greeting': '你好！很高兴和你聊天！',
+        'music': '我很喜欢音乐！你喜欢什么类型的音乐呢？',
+        'news': '我无法获取最新新闻，建议你查看新闻应用或网站。',
+        'food': '美食真是太棒了！你想了解什么类型的美食呢？',
+        'travel': '旅游是很棒的体验！你想去哪里旅游呢？',
+        'unknown': '抱歉，我不太明白你的意思。你可以尝试询问天气、时间、音乐、美食或旅游相关的问题。'
+    }
+    return fallback_answers.get(intent, fallback_answers['unknown'])
 
 @app.route('/')
 def index():
@@ -233,9 +298,8 @@ def upload_file():
             # 使用LLM进行意图识别
             intent = detect_intent_LLM(recognized_text)
             
-            # 加载知识库并获取回答
-            qa_data = load_qa_data()
-            answer = get_answer(intent, qa_data)
+            # 使用Ollama生成智能回答
+            answer = generate_ollama_response(recognized_text, intent)
             
             # 清理上传的文件
             os.remove(filepath)
@@ -254,6 +318,35 @@ def upload_file():
             return jsonify({'error': f'处理文件时出错: {str(e)}'}), 500
     
     return jsonify({'error': '不支持的文件格式'}), 400
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    try:
+        data = request.get_json()
+        text = data.get('text', '').strip()
+
+        if not text:
+            return jsonify({'error': '文本内容不能为空'}), 400
+
+        # 使用LLM进行意图识别
+        intent = detect_intent_LLM(text)
+
+        # 使用Ollama生成智能回答
+        answer = generate_ollama_response(text, intent)
+
+        return jsonify({
+            'success': True,
+            'recognized_text': text,
+            'intent': intent,
+            'answer': answer
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'处理请求时出错: {str(e)}'}), 500
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
 
 @app.route('/test', methods=['GET'])
 def test():
